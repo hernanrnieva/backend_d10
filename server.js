@@ -11,6 +11,7 @@ const {faker: faker} = require('@faker-js/faker')
 faker.locale = 'en'
 const {commerce, image} = faker
 const MessageNormalizer = require('./normalizr')
+const session = require('express-session')
 
 /* Server initialization */
 const app = express()
@@ -28,6 +29,11 @@ server.on('error', (error) => console.log(`Error encountered: ${error}`))
 /* Template configuration */
 app.use(express.urlencoded({extended: true}))
 app.use(express.json())
+app.use(session({
+    secret: 'secret',
+    resave: true,
+    saveUninitialized: true
+}))
 
 app.engine('hbs', handlebars({
     extname: 'hbs',
@@ -89,6 +95,15 @@ const validateMessage = (message) => {
 }
 
 /* Initial render */
+app.get('/login', (req, res) => {
+    if(!req.query.username)
+        res.render('layouts/login')
+    else{
+        req.session.username = req.query.username
+        res.render('layouts/main', {username: req.session.username})
+    }
+})
+
 app.get('/products', (req, res) => {
     res.render('layouts/main')
 })
@@ -103,8 +118,13 @@ app.get('/products-test', (req, res) => {
     res.render('layouts/main-test', {products: data})
 })
 
+app.get('/logout', (req, res) => {
+    res.render('layouts/goodbye', {username: req.session.username})
+})
+
 /* Socket functionality */
 io.on('connection', (socket) => {
+    ///////// Delete
     console.log('A user has connected')
     
     /* Existing products emittance */
