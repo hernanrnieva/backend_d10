@@ -7,11 +7,10 @@ const ContainerDB = require('./containers/contDB')
 const ContainerFile = require('./containers/contFile')
 const {Server: IOServer} = require('socket.io')
 const {Server: HTTPServer} = require('http')
-const {faker: faker} = require('@faker-js/faker')
-faker.locale = 'en'
-const {commerce, image} = faker
 const MessageNormalizer = require('./normalizr')
 const session = require('express-session')
+const cookieParser = require('cookie-parser')
+const connectMongo = require('connect-mongo')
 
 /* Server initialization */
 const app = express()
@@ -29,21 +28,13 @@ server.on('error', (error) => console.log(`Error encountered: ${error}`))
 /* Template configuration */
 app.use(express.urlencoded({extended: true}))
 app.use(express.json())
-app.use(session({
-    secret: 'secret',
-    resave: true,
-    saveUninitialized: true
-}))
-
 app.engine('hbs', handlebars({
     extname: 'hbs',
     layoutsDir: './public/views/layouts',
     defaultLayout: ''
 }))
-
 app.set('views', './public/views')
 app.set('view engine', 'hbs')
-
 const fileContent = fs.readFileSync('./public/views/partials/table.hbs').toString()
 let template = hbs.compile(fileContent)
 
@@ -52,81 +43,63 @@ const products = new ContainerFile('products.txt')
 const messages = new ContainerFile('messages.txt') 
 const messageNormalizer = new MessageNormalizer()
 
+/* Session configuration */
+app.use(cookieParser())
+const advancedOptions = {useNewUrlParser: true, useUnifiedTopology: true}
+app.use(session({
+    store: connectMongo.create({
+        mongoUrl: 'mongodb+srv://hnieva:83vkK5DfsCI1o5OR@cluster0.3gv82.mongodb.net/sessions?retryWrites=true&w=majority',
+        mongoOptions: advancedOptions,
+        ttl:10
+    }),
+    secret: 'secret',
+    resave: false,
+    saveUninitialized: false
+}))
+
 /* Product helper functions */
-const PRODUCT_KEYS = 3
-
-const validateProduct = (product) => {
-    let keys = Object.keys(product).length
-    if(keys != PRODUCT_KEYS)
-        throw 'Object does not have the correct amount of properties'
-
-    if(!product.hasOwnProperty('title') || !product.hasOwnProperty('price') || !product.hasOwnProperty('thumbnail'))
-        throw 'Object does not have the correct properties'
-
-    return product
-}
-
-function returnElement(){
-    const element = {}
-    element.title = commerce.productName()
-    element.price = commerce.price()
-    element.thumbnail = image.food()
-    return element
-}
+const validateProduct = require('./helpers/products')
 
 /* Message helper functions */
-const MESSAGE_KEYS = 2
+const validateMessage = require('./helpers/messages')
 
-const validateMessage = (message) => {
-    let keys = Object.keys(message).length
-    if(keys != MESSAGE_KEYS)
-        throw 'Object does not have the correct amount of properties'
-
-    if(!message.hasOwnProperty('author') ||
-       !message.hasOwnProperty('text'))
-        throw 'Object does not have the correct properties'
-
-    const regex = /^(([^<>()[\]\.,;:\s@\"]+(\.[^<>()[\]\.,;:\s@\"]+)*)|(\".+\"))@(([^<>()[\]\.,;:\s@\"]+\.)+[^<>()[\]\.,;:\s@\"]{2,})$/i
-
-    if(message.author.email.match(regex))
-        return message
-    
-    return null
-}
+/* Test render */
+const testRouter = require('./test-api/products-test')
+app.use('/products-test', testRouter)
 
 /* Initial render */
 app.get('/login', (req, res) => {
-    if(!req.query.username)
-        res.render('layouts/login')
-    else{
+    if(req.query.username){
         req.session.username = req.query.username
-        res.render('layouts/main', {username: req.session.username})
+        res.redirect('/products')
     }
+
+    else if(req.session.username)
+        res.redirect('/products')
+
+    else
+        res.render('layouts/login')
 })
 
 app.get('/products', (req, res) => {
-    res.render('layouts/main')
-})
-
-/* Test render */
-app.get('/products-test', (req, res) => {
-    const data = []
-
-    for(let i = 0; i < 5; i++)
-        data.push(returnElement())
-
-    res.render('layouts/main-test', {products: data})
+    if(!req.session?.username)
+        res.redirect('/login')
+    else
+        res.render('layouts/main', {username: req.session.username})
 })
 
 app.get('/logout', (req, res) => {
-    res.render('layouts/goodbye', {username: req.session.username})
+    const user = req.session.username
+    req.session.destroy((e) => {
+        if(e) 
+            res.json(e)
+        else
+            res.render('layouts/goodbye', {username: user})
+    })
 })
 
 /* Socket functionality */
 io.on('connection', (socket) => {
-    ///////// Delete
-    console.log('A user has connected')
-    
     /* Existing products emittance */
     products.getAll().then((data) => {
         socket.emit('product', template({products: data}))
